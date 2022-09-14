@@ -42,7 +42,7 @@ type Server struct {
 
 func logErr(err error) {
 	if err != nil {
-		log.Fatalf(err.Error())
+		log.Fatal(err)
 	}
 }
 func FilezillaCreds() {
