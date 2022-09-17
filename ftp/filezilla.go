@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"log"
 	"os"
 )
 
@@ -38,45 +37,45 @@ type Server struct {
 	DirectoryComparison int      `xml:"DirectoryComparison"`
 }
 
-func logErr(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-func FilezillaCreds() {
+func FilezillaCreds() (Creds, error) {
+	cred := Creds{"UNKNOWN", "UNKNOWN", "UNKNOWN", 0}
 	f1 := "recentservers.xml"
 	f2 := "sitemanager.xml"
-	dir, dErr := os.UserConfigDir()
-	logErr(dErr)
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return cred, err
+	}
 	path := dir + "\\FileZilla\\%s"
 	path1 := fmt.Sprintf(path, f1)
 	path2 := fmt.Sprintf(path, f2)
-	fmt.Println(path1)
 	recSerFile, fErr := os.Open(path1)
 	var byteValue []byte
-	var rErr error
 	if fErr != nil {
 		recSerFile.Close()
 		siteConFile, fErr2 := os.Open(path2)
 		if fErr2 != nil {
-			fmt.Println("Error: Not able to access any of the files.")
+			return cred, fErr2
 		}
 		defer siteConFile.Close()
-		byteValue, rErr = io.ReadAll(siteConFile)
+		byteValue, err = io.ReadAll(siteConFile)
 
 	} else {
 		defer recSerFile.Close()
-		byteValue, rErr = io.ReadAll(recSerFile)
+		byteValue, err = io.ReadAll(recSerFile)
 	}
-	logErr(rErr)
+	if err != nil {
+		return cred, err
+	}
 	var fz FileZilla
 	xml.Unmarshal(byteValue, &fz)
 	ePass := fz.RecentServers.Server.Pass
-	data, dErr := base64.StdEncoding.DecodeString(ePass)
-	logErr(dErr)
-	pass := fmt.Sprintf("%q\n", data)
-	fmt.Println("Host:\t\t", fz.RecentServers.Server.Host)
-	fmt.Println("User:\t\t", fz.RecentServers.Server.User)
-	fmt.Println("Port:\t\t", fz.RecentServers.Server.Port)
-	fmt.Println("Password:\t", pass)
+	data, err := base64.StdEncoding.DecodeString(ePass)
+	if err != nil {
+		return cred, err
+	}
+	cred.Host = fz.RecentServers.Server.Host
+	cred.Username = fz.RecentServers.Server.User
+	cred.Password = string(data)
+	cred.Port = fz.RecentServers.Server.Port
+	return cred, nil
 }
